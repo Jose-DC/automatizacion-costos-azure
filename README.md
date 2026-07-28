@@ -99,10 +99,3 @@ Este proyecto sirve para practicar una automatización pequeña, pero con varias
 ## Estado
 
 La automatización quedó implementada y funcionando con ejecución programada. Este repositorio público es una versión simplificada y anonimizada para mostrar el diseño y el aprendizaje sin exponer información interna.
-
-## Próximas mejoras
-
-- Agregar una validación de workloads más completa.
-- Registrar duración y resultado de cada ejecución.
-- Incorporar un ejemplo de schedule con zona horaria de Santiago.
-- Añadir una tabla de ahorro con datos ficticios claramente identificados.
