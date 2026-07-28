@@ -23,6 +23,8 @@ La automatización se ejecuta fuera de AKS usando Azure Automation:
 
 El runbook usa una identidad administrada para no guardar contraseñas ni tokens.
 
+Los dos schedules quedaron habilitados para ejecutar el flujo de forma automática en los horarios definidos: uno inicia PostgreSQL y AKS al comienzo de la jornada, y el otro detiene primero AKS y luego PostgreSQL al terminarla. La prueba manual del runbook se realizó antes de dejar activa la recurrencia.
+
 ```text
 Inicio:    PostgreSQL -> Ready -> AKS -> validar workloads
 Detención: AKS -> detenido -> PostgreSQL -> validar estados
@@ -48,12 +50,6 @@ Para asignar esos roles se necesita un Owner o una persona con permisos de admin
 - Variables reemplazables para usar nombres ficticios de recursos.
 - Validaciones básicas de estado antes de continuar.
 - Notas sobre rollback, permisos y medición del consumo.
-
-## Qué no incluye
-
-Este repositorio no contiene la configuración de una empresa ni pretende ser copiar y pegar en producción. No incluye suscripciones reales, nombres de recursos, tickets, identificadores, dominios, kubeconfig ni credenciales.
-
-Tampoco apaga suscripciones o Resource Groups completos. La automatización debe apuntar solo a los recursos que realmente forman parte del ambiente de pruebas.
 
 ## Ejemplo de uso
 
@@ -102,7 +98,7 @@ Este proyecto sirve para practicar una automatización pequeña, pero con varias
 
 ## Estado
 
-La secuencia fue probada como parte de un laboratorio de referencia. Este repositorio público es una versión simplificada y anonimizada para mostrar el diseño y el aprendizaje sin exponer información interna.
+La automatización quedó implementada y funcionando con ejecución programada. Este repositorio público es una versión simplificada y anonimizada para mostrar el diseño y el aprendizaje sin exponer información interna.
 
 ## Próximas mejoras
 
