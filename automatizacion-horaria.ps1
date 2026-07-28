@@ -8,6 +8,7 @@ param(
     [string]$DatabaseName = '<POSTGRES_SERVER_NAME>'
 )
 
+# Ejemplo educativo. Revisar nombres, permisos y dependencias antes de usarlo.
 $ErrorActionPreference = 'Stop'
 
 function Get-PostgresState {

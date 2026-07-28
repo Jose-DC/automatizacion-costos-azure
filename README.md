@@ -1,91 +1,96 @@
-# Automatización horaria para optimización de costos en Azure
+# Automatización horaria de recursos en Azure
 
-Réplica pública y anonimizada de una automatización de operaciones cloud que enciende y detiene un clúster AKS y una instancia de PostgreSQL Flexible Server según un horario laboral.
+Este es un proyecto personal para practicar una situación bastante común en operaciones cloud: tener recursos de pruebas encendidos todo el día aunque nadie los esté usando.
 
-El objetivo es reducir consumo en ambientes de pruebas que no necesitan permanecer encendidos fuera de la jornada, manteniendo el orden correcto de dependencias y una recuperación verificable al siguiente inicio.
+La idea es programar el encendido y apagado de un clúster AKS y una base de datos PostgreSQL Flexible Server. Así se puede reducir el consumo fuera del horario de trabajo sin depender de que alguien se acuerde de hacerlo manualmente.
 
-> **Nota de alcance:** este repositorio no contiene la implementación interna ni datos de una empresa. Los nombres, identificadores, horarios y valores son ficticios y sirven para demostrar el diseño técnico de forma segura.
+## El problema
 
-## Problema
+Un ambiente de pruebas puede quedar funcionando durante la noche o todo el fin de semana. En ese tiempo sigue consumiendo recursos, aunque no haya usuarios trabajando.
 
-Un ambiente de pruebas con AKS y PostgreSQL puede seguir consumiendo recursos durante noches y fines de semana aunque no tenga usuarios trabajando. Apagar recursos manualmente depende de la memoria de una persona, genera pasos repetitivos y aumenta el riesgo de detener servicios en un orden incorrecto.
+Apagarlo manualmente también tiene sus riesgos. No basta con detener cualquier cosa primero: si se apaga la base de datos mientras las aplicaciones siguen levantadas, pueden aparecer errores. Y si el clúster está detenido, no puede ejecutar un CronJob para volver a encenderse.
 
-La dificultad no es solo ejecutar un `stop`: al iniciar, PostgreSQL debe estar disponible antes de que AKS recupere sus workloads; al detener, AKS debe bajar primero para no dejar aplicaciones intentando conectarse a una base de datos apagada.
+## La solución
 
-## Solución propuesta
+La automatización se ejecuta fuera de AKS usando Azure Automation:
 
-Una cuenta de Azure Automation con identidad administrada ejecuta un runbook parametrizado:
+1. En el horario de inicio, se enciende PostgreSQL.
+2. Se espera hasta que la base de datos quede en estado `Ready`.
+3. Se inicia AKS.
+4. Se revisan los nodos y los workloads.
+5. En el horario de detención, primero se apaga AKS.
+6. Cuando el clúster ya está detenido, se apaga PostgreSQL.
 
-- `Start`: inicia PostgreSQL, espera el estado `Ready`, inicia AKS y valida la recuperación.
-- `Stop`: detiene AKS, espera el estado detenido y luego detiene PostgreSQL.
-- Los schedules usan la zona horaria `America/Santiago`.
-- Las acciones se limitan al alcance de los recursos definidos para el ambiente.
-- Cada ejecución debe dejar evidencia del job, estados finales, duración y errores.
-
-## Arquitectura
-
-```mermaid
-flowchart LR
-    S[Schedule laboral] --> A[Azure Automation]
-    A --> I[Identidad administrada]
-    I --> R[RBAC limitado]
-    R --> P[(PostgreSQL Flexible Server)]
-    R --> K[AKS]
-    K --> V[Validación de nodos y workloads]
-    A --> L[Estado del job y bitácora]
-```
-
-Secuencias:
+El runbook usa una identidad administrada para no guardar contraseñas ni tokens.
 
 ```text
-Inicio:     PostgreSQL -> esperar Ready -> AKS -> validar workloads
-Detención:  AKS -> esperar detenido -> PostgreSQL -> validar estados
+Inicio:    PostgreSQL -> Ready -> AKS -> validar workloads
+Detención: AKS -> detenido -> PostgreSQL -> validar estados
 ```
 
-## Alcance demostrable
+## Qué incluye este repositorio
 
-- Automatización externa al clúster mediante Azure Automation.
-- Identidad administrada sin credenciales persistidas.
-- Parametrización de nombres, grupos de recursos y horarios.
-- Validación de estados de PostgreSQL, AKS, nodos y deployments.
-- Rollback operativo: deshabilitar schedules, iniciar manualmente en el orden correcto y mantener el ambiente encendido mientras se investiga.
-- Comparación de consumo antes y después mediante Azure Cost Management.
+- Un script de ejemplo en PowerShell con la secuencia de inicio y detención.
+- Variables reemplazables para usar nombres ficticios de recursos.
+- Validaciones básicas de estado antes de continuar.
+- Notas sobre rollback, permisos y medición del consumo.
 
-## Estado del proyecto
+## Qué no incluye
 
-| Parte | Estado |
-|---|---|
-| Diseño de la secuencia Start/Stop | Implementado y validado en el caso real de referencia |
-| Prueba controlada del runbook | Validada en el caso real de referencia |
-| Ejecución programada | Validada en el caso real de referencia |
-| Réplica pública de código y documentación | En construcción |
-| Evidencia de ahorro | Se documentará con datos agregados y sin información interna |
+Este repositorio no contiene la configuración de una empresa ni pretende ser copiar y pegar en producción. No incluye suscripciones reales, nombres de recursos, tickets, identificadores, dominios, kubeconfig ni credenciales.
 
-## Estructura
+Tampoco apaga suscripciones o Resource Groups completos. La automatización debe apuntar solo a los recursos que realmente forman parte del ambiente de pruebas.
 
-```text
-automatizacion-costos-azure/
-|-- docs/
-|   |-- arquitectura.md
-|   |-- validacion.md
-|   `-- troubleshooting.md
-|-- scripts/
-|   `-- automatizacion-horaria.ps1
-|-- .gitignore
-`-- README.md
+## Ejemplo de uso
+
+El script está preparado como referencia y usa valores ficticios. Antes de probarlo en un laboratorio hay que reemplazar las variables y revisar los permisos:
+
+```powershell
+.\automatizacion-horaria.ps1 `
+  -Action Start `
+  -Subscription '<SUBSCRIPTION_ID>' `
+  -AksResourceGroup '<AKS_RESOURCE_GROUP>' `
+  -AksName '<AKS_NAME>' `
+  -DatabaseResourceGroup '<DATABASE_RESOURCE_GROUP>' `
+  -DatabaseName '<POSTGRES_SERVER_NAME>'
 ```
 
-## Seguridad y límites
+El orden de las operaciones es la parte más importante del ejemplo. En un ambiente real también se deberían revisar consumidores externos, ventanas de mantenimiento, alertas y reglas de rollback antes de activar un horario recurrente.
 
-- No incluir suscripciones, tickets, nombres reales, GUID, dominios, kubeconfig, tokens ni cadenas de conexión.
-- No apagar suscripciones completas ni Resource Groups compartidos.
-- No modificar directamente el Resource Group administrado `MC_*`.
-- Validar consumidores externos antes de programar una detención.
-- Revisar si los roles integrados son más amplios de lo necesario y reemplazarlos por un rol personalizado cuando el contexto lo permita.
+## Tecnologías
 
-## Próximos pasos
+- Azure Automation
+- Azure Kubernetes Service (AKS)
+- PostgreSQL Flexible Server
+- Azure CLI
+- PowerShell
+- Identidad administrada y RBAC
+- Azure Cost Management
 
-1. Completar la réplica pública del runbook con variables ficticias.
-2. Agregar validaciones y troubleshooting reproducibles.
-3. Incorporar una captura o tabla de ahorro con datos agregados.
-4. Enlazar el repositorio desde la página de proyectos del portafolio.
+## Cómo comprobar si realmente se ahorra
+
+No basta con mirar que el clúster esté apagado. Para medir el resultado se deben comparar periodos equivalentes en Azure Cost Management, separando el costo de AKS, PostgreSQL y cualquier otro recurso que siga encendido.
+
+También conviene anotar las fechas, la moneda y si hubo otros cambios en el ambiente. De esa forma el ahorro no se presenta como una suposición.
+
+## Aprendizajes
+
+Este proyecto sirve para practicar una automatización pequeña, pero con varias decisiones de operación detrás:
+
+- Diseñar dependencias entre servicios.
+- Ejecutar automatizaciones fuera del clúster.
+- Usar identidad administrada en vez de secretos.
+- Mantener los permisos acotados al alcance necesario.
+- Validar la recuperación y no solo el comando de apagado.
+- Relacionar una decisión técnica con una medición de costos.
+
+## Estado
+
+La secuencia fue probada como parte de un laboratorio de referencia. Este repositorio público es una versión simplificada y anonimizada para mostrar el diseño y el aprendizaje sin exponer información interna.
+
+## Próximas mejoras
+
+- Agregar una validación de workloads más completa.
+- Registrar duración y resultado de cada ejecución.
+- Incorporar un ejemplo de schedule con zona horaria de Santiago.
+- Añadir una tabla de ahorro con datos ficticios claramente identificados.
