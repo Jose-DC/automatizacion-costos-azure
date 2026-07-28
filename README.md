@@ -1,12 +1,12 @@
 # Automatización horaria de recursos en Azure
 
-Este es un proyecto personal para practicar una situación bastante común en operaciones cloud: tener recursos de pruebas encendidos todo el día aunque nadie los esté usando.
+Este es un proyecto personal para practicar una situación bastante común en operaciones cloud: mantener recursos encendidos fuera de su ventana real de uso, aunque nadie los esté utilizando.
 
-El escenario es concreto: un clúster de Kubernetes administrado con Azure Kubernetes Service (AKS) y una base de datos PostgreSQL Flexible Server. No se trata de máquinas virtuales sueltas ni de apagar una suscripción completa. La idea es programar el encendido y apagado de esos dos recursos para reducir el consumo fuera del horario de trabajo sin depender de que alguien se acuerde de hacerlo manualmente.
+El escenario es concreto: un clúster de Kubernetes administrado con Azure Kubernetes Service (AKS) y una base de datos PostgreSQL Flexible Server. No se trata de máquinas virtuales sueltas ni de apagar una suscripción completa. La misma idea puede aplicarse a ambientes de pruebas y a componentes productivos que tengan una ventana operativa aprobada; en producción no se debe apagar un servicio sin revisar antes su disponibilidad, dependencias y SLA.
 
 ## El problema
 
-Un ambiente de pruebas con AKS y PostgreSQL puede quedar funcionando durante la noche o todo el fin de semana. En ese tiempo el clúster, los nodos y la base de datos siguen consumiendo recursos, aunque no haya usuarios trabajando.
+Un ambiente no productivo con AKS y PostgreSQL puede quedar funcionando durante la noche o todo el fin de semana. Lo mismo puede ocurrir con una carga productiva que tenga horarios de atención definidos. En ambos casos, el clúster, los nodos y la base de datos siguen consumiendo recursos fuera de la ventana de uso.
 
 Apagarlo manualmente también tiene sus riesgos. No basta con detener cualquier cosa primero: si se apaga la base de datos mientras las aplicaciones siguen levantadas, pueden aparecer errores. Y si el clúster está detenido, no puede ejecutar un CronJob para volver a encenderse.
 
@@ -21,7 +21,7 @@ La automatización se ejecuta fuera de AKS usando Azure Automation:
 5. En el horario de detención, primero se apaga AKS.
 6. Cuando el clúster ya está detenido, se apaga PostgreSQL.
 
-El runbook usa una identidad administrada para no guardar contraseñas ni tokens.
+El runbook usa una identidad administrada para que Azure Automation pueda operar mediante RBAC, sin repartir contraseñas ni tokens entre scripts o personas.
 
 Los dos schedules quedaron habilitados para ejecutar el flujo de forma automática en los horarios definidos: uno inicia PostgreSQL y AKS al comienzo de la jornada, y el otro detiene primero AKS y luego PostgreSQL al terminarla. La prueba manual del runbook se realizó antes de dejar activa la recurrencia.
 
