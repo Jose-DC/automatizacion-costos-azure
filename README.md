@@ -2,11 +2,11 @@
 
 Este es un proyecto personal para practicar una situación bastante común en operaciones cloud: tener recursos de pruebas encendidos todo el día aunque nadie los esté usando.
 
-La idea es programar el encendido y apagado de un clúster AKS y una base de datos PostgreSQL Flexible Server. Así se puede reducir el consumo fuera del horario de trabajo sin depender de que alguien se acuerde de hacerlo manualmente.
+El escenario es concreto: un clúster de Kubernetes administrado con Azure Kubernetes Service (AKS) y una base de datos PostgreSQL Flexible Server. No se trata de máquinas virtuales sueltas ni de apagar una suscripción completa. La idea es programar el encendido y apagado de esos dos recursos para reducir el consumo fuera del horario de trabajo sin depender de que alguien se acuerde de hacerlo manualmente.
 
 ## El problema
 
-Un ambiente de pruebas puede quedar funcionando durante la noche o todo el fin de semana. En ese tiempo sigue consumiendo recursos, aunque no haya usuarios trabajando.
+Un ambiente de pruebas con AKS y PostgreSQL puede quedar funcionando durante la noche o todo el fin de semana. En ese tiempo el clúster, los nodos y la base de datos siguen consumiendo recursos, aunque no haya usuarios trabajando.
 
 Apagarlo manualmente también tiene sus riesgos. No basta con detener cualquier cosa primero: si se apaga la base de datos mientras las aplicaciones siguen levantadas, pueden aparecer errores. Y si el clúster está detenido, no puede ejecutar un CronJob para volver a encenderse.
 
@@ -27,6 +27,20 @@ El runbook usa una identidad administrada para no guardar contraseñas ni tokens
 Inicio:    PostgreSQL -> Ready -> AKS -> validar workloads
 Detención: AKS -> detenido -> PostgreSQL -> validar estados
 ```
+
+## Qué se necesita en Azure
+
+Para montar este flujo se necesitan varios componentes y permisos. La cuenta que configura los recursos no necesariamente es la misma identidad que ejecuta el runbook.
+
+- Una cuenta de Azure Automation con identidad administrada asignada por el sistema.
+- Dos schedules: uno para iniciar y otro para detener, configurados con la zona horaria `America/Santiago`.
+- Un runbook de PowerShell con un parámetro para decidir entre `Start` y `Stop`.
+- Acceso a Azure CLI y a los módulos de Azure Automation/Az usados por el entorno.
+- Permisos para consultar y operar el AKS y PostgreSQL seleccionados.
+
+En el escenario de referencia, la identidad administrada recibió roles integrados con alcance directo a los recursos: `Azure Kubernetes Service Contributor Role` sobre AKS y `Contributor` sobre PostgreSQL Flexible Server. Esto permite operar los recursos sin guardar claves, pero `Contributor` es más amplio que un permiso estrictamente mínimo. Una mejora posterior sería crear un rol personalizado con solo las acciones de lectura, inicio y detención necesarias.
+
+Para asignar esos roles se necesita un Owner o una persona con permisos de administración de acceso (RBAC). Un usuario con `Contributor` puede crear recursos, pero normalmente no puede crear asignaciones de roles por sí solo. Esa separación de responsabilidades fue parte importante de la implementación.
 
 ## Qué incluye este repositorio
 
@@ -56,6 +70,8 @@ El script está preparado como referencia y usa valores ficticios. Antes de prob
 ```
 
 El orden de las operaciones es la parte más importante del ejemplo. En un ambiente real también se deberían revisar consumidores externos, ventanas de mantenimiento, alertas y reglas de rollback antes de activar un horario recurrente.
+
+El ejemplo no crea máquinas virtuales ni administra nodos directamente. AKS sigue siendo un servicio administrado de Azure; el script solo solicita las acciones de inicio y detención del clúster y espera sus estados antes de continuar.
 
 ## Tecnologías
 
