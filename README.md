@@ -6,9 +6,9 @@ El escenario es concreto: un clúster de Kubernetes administrado con Azure Kuber
 
 ## El problema
 
-Un ambiente no productivo con AKS y PostgreSQL puede quedar funcionando durante la noche o todo el fin de semana. Lo mismo puede ocurrir con una carga productiva que tenga horarios de atención definidos. En ambos casos, el clúster, los nodos y la base de datos siguen consumiendo recursos fuera de la ventana de uso.
+En Azure, un clúster AKS y su PostgreSQL pueden seguir generando consumo durante la noche, los fines de semana o cualquier tramo fuera de la ventana de operación. En pruebas ocurre cuando nadie está usando la plataforma; en producción puede ocurrir con servicios o workloads que tienen horarios definidos.
 
-Apagarlo manualmente también tiene sus riesgos. No basta con detener cualquier cosa primero: si se apaga la base de datos mientras las aplicaciones siguen levantadas, pueden aparecer errores. Y si el clúster está detenido, no puede ejecutar un CronJob para volver a encenderse.
+El problema es pagar capacidad que no se necesita y depender de una detención manual que puede hacerse en el orden incorrecto. Si PostgreSQL se apaga mientras las aplicaciones siguen levantadas, pueden aparecer errores; y si el clúster está detenido, no puede ejecutar un CronJob para volver a encenderse. En producción, este patrón solo debe aplicarse cuando la ventana esté autorizada y sea compatible con la disponibilidad esperada.
 
 ## La solución
 
