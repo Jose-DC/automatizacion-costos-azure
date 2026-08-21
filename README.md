@@ -48,7 +48,10 @@ Para asignar esos roles se necesita un Owner o una persona con permisos de admin
 
 - Un script de ejemplo en PowerShell con la secuencia de inicio y detención.
 - Variables reemplazables para usar nombres ficticios de recursos.
-- Validaciones básicas de estado antes de continuar.
+- Diseño idempotente: revisa el estado real de cada recurso antes de actuar y no repite una operación que ya está en curso.
+- Reintentos con espera creciente cuando Azure no tiene capacidad disponible de inmediato para iniciar la base de datos.
+- Validación de módulos y cmdlets requeridos antes de operar, y reintento del flujo completo si falla.
+- Validación final de workloads ejecutada dentro del propio clúster (no solo el estado del servicio administrado).
 - Notas sobre rollback, permisos y medición del consumo.
 
 ## Ejemplo de uso
@@ -58,12 +61,21 @@ El script está preparado como referencia y usa valores ficticios. Antes de prob
 ```powershell
 .\automatizacion-horaria.ps1 `
   -Action Start `
-  -Subscription '<SUBSCRIPTION_ID>' `
+  -SubscriptionName '<SUBSCRIPTION_NAME>' `
   -AksResourceGroup '<AKS_RESOURCE_GROUP>' `
   -AksName '<AKS_NAME>' `
-  -DatabaseResourceGroup '<DATABASE_RESOURCE_GROUP>' `
-  -DatabaseName '<POSTGRES_SERVER_NAME>'
+  -PostgreSqlResourceGroup '<POSTGRES_RESOURCE_GROUP>' `
+  -PostgreSqlName '<POSTGRES_SERVER_NAME>' `
+  -AppNamespace '<APP_NAMESPACE>'
 ```
+
+## Troubleshooting
+
+- **Proveedor no registrado:** falta registrar el namespace de Azure Automation en la suscripción; se corrige registrándolo y validando el estado `Registered`.
+- **Error de autorización RBAC:** la identidad administrada no tiene permiso sobre ese recurso puntual; se revisa el alcance de la asignación, sin ampliarla a toda la suscripción.
+- **PostgreSQL no llega a `Ready`:** puede ser una operación en curso o falta de capacidad regional; no se reintenta el inicio mientras el estado siga en transición.
+- **AKS no inicia:** se revisa el Activity Log antes de reintentar, manteniendo PostgreSQL encendido mientras se diagnostica.
+- **Un primer encendido automático falló** por un problema transitorio al cargar módulos de PowerShell. Se resolvió agregando la validación explícita de módulos y cmdlets, más un reintento completo del flujo antes de declarar error (ver `Import-RequiredModules` en el script).
 
 El orden de las operaciones es la parte más importante del ejemplo. En un ambiente real también se deberían revisar consumidores externos, ventanas de mantenimiento, alertas y reglas de rollback antes de activar un horario recurrente.
 
@@ -84,6 +96,8 @@ El ejemplo no crea máquinas virtuales ni administra nodos directamente. AKS sig
 No basta con mirar que el clúster esté apagado. Para medir el resultado se deben comparar periodos equivalentes en Azure Cost Management, separando el costo de AKS, PostgreSQL y cualquier otro recurso que siga encendido.
 
 También conviene anotar las fechas, la moneda y si hubo otros cambios en el ambiente. De esa forma el ahorro no se presenta como una suposición.
+
+Una revisión preliminar en el ambiente de referencia mostró un gasto aproximado de USD 12 al día con los recursos encendidos, frente a USD 2,65 acumulados durante un fin de semana completo con todo apagado. Es una señal de ahorro real, pero un solo fin de semana no permite fijar un porcentaje mensual confiable: falta repetir la medición por al menos dos semanas con el mismo alcance y métrica.
 
 ## Aprendizajes
 
