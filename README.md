@@ -1,115 +1,118 @@
-# Automatización horaria de recursos en Azure
+# Automatización horaria de AKS y PostgreSQL en Azure
 
-Este es un proyecto personal para practicar una situación bastante común en operaciones cloud: mantener recursos encendidos fuera de su ventana real de uso, aunque nadie los esté utilizando.
+Runbook en PowerShell para iniciar y detener un ambiente de testing según su horario de uso. Coordina AKS y PostgreSQL Flexible Server, espera sus estados y comprueba nodos y Deployments antes de finalizar el inicio.
 
-El escenario es concreto: un clúster de Kubernetes administrado con Azure Kubernetes Service (AKS) y una base de datos PostgreSQL Flexible Server. No se trata de máquinas virtuales sueltas ni de apagar una suscripción completa. La misma idea puede aplicarse a ambientes de pruebas y a componentes productivos que tengan una ventana operativa aprobada; en producción no se debe apagar un servicio sin revisar antes su disponibilidad, dependencias y SLA.
+Desarrollé y validé la automatización en testing. Este repositorio contiene una **versión simplificada y anonimizada**: conserva el diseño y sus decisiones operativas sin publicar recursos, credenciales ni registros internos.
 
-## El problema
+## Problema y solución
 
-En Azure, un clúster AKS y su PostgreSQL pueden seguir generando consumo durante la noche, los fines de semana o cualquier tramo fuera de la ventana de operación. En pruebas ocurre cuando nadie está usando la plataforma; en producción puede ocurrir con servicios o workloads que tienen horarios definidos.
+Mantener el ambiente encendido fuera de uso genera consumo de cómputo innecesario. Detener PostgreSQL antes que las aplicaciones, o iniciar AKS sin que la base esté lista, agrega fallas de dependencia.
 
-El problema es pagar capacidad que no se necesita y depender de una detención manual que puede hacerse en el orden incorrecto. Si PostgreSQL se apaga mientras las aplicaciones siguen levantadas, pueden aparecer errores; y si el clúster está detenido, no puede ejecutar un CronJob para volver a encenderse. En producción, este patrón solo debe aplicarse cuando la ventana esté autorizada y sea compatible con la disponibilidad esperada.
+Azure Automation ejecuta el flujo fuera del clúster: un AKS detenido no puede ejecutar el CronJob que lo vuelve a iniciar. La identidad administrada permite autenticar sin incluir contraseñas en el código.
 
-## La solución
-
-La automatización se ejecuta fuera de AKS usando Azure Automation:
-
-1. En el horario de inicio, se enciende PostgreSQL.
-2. Se espera hasta que la base de datos quede en estado `Ready`.
-3. Se inicia AKS.
-4. Se revisan los nodos y los workloads.
-5. En el horario de detención, primero se apaga AKS.
-6. Cuando el clúster ya está detenido, se apaga PostgreSQL.
-
-El runbook usa una identidad administrada para que Azure Automation pueda operar mediante RBAC, sin repartir contraseñas ni tokens entre scripts o personas.
-
-Los dos schedules quedaron habilitados para ejecutar el flujo de forma automática en los horarios definidos: uno inicia PostgreSQL y AKS al comienzo de la jornada, y el otro detiene primero AKS y luego PostgreSQL al terminarla. La prueba manual del runbook se realizó antes de dejar activa la recurrencia.
-
-```text
-Inicio:    PostgreSQL -> Ready -> AKS -> validar workloads
-Detención: AKS -> detenido -> PostgreSQL -> validar estados
+```mermaid
+flowchart TD
+    S[Schedules: ventana de uso] --> A[Azure Automation / PowerShell]
+    I[Identidad administrada + RBAC] --> A
+    A --> D{Acción}
+    D -->|Start| P[PostgreSQL: esperar Ready]
+    P --> K[AKS: esperar Running / Succeeded]
+    K --> V[Nodos Ready y Deployments disponibles]
+    D -->|Stop| KS[AKS: esperar Stopped / Succeeded]
+    KS --> PS[PostgreSQL: esperar Stopped]
 ```
 
-## Qué se necesita en Azure
+## Qué implementa
 
-Para montar este flujo se necesitan varios componentes y permisos. La cuenta que configura los recursos no necesariamente es la misma identidad que ejecuta el runbook.
+| Componente | Alcance |
+|---|---|
+| Orden de operación | PostgreSQL → AKS al iniciar; AKS → PostgreSQL al detener. |
+| Estados | Consulta antes de actuar y espera transiciones conocidas. |
+| Reintentos | Carga de módulos, flujo de inicio y errores transitorios de PostgreSQL. |
+| Validación Kubernetes | `kubectl wait` para nodos y Deployments mediante AKS Run Command. |
+| Diagnóstico | Estados, warnings y listado de Deployments/pods en los streams del job. |
+| Autenticación | Identidad administrada y selección de suscripción. |
 
-- Una cuenta de Azure Automation con identidad administrada asignada por el sistema.
-- Dos schedules: uno para iniciar y otro para detener, configurados con la zona horaria `America/Santiago`.
-- Un runbook de PowerShell con un parámetro para decidir entre `Start` y `Stop`.
-- Acceso a Azure CLI y a los módulos de Azure Automation/Az usados por el entorno.
-- Permisos para consultar y operar el AKS y PostgreSQL seleccionados.
+La validación Kubernetes no prueba HTTP, SQL ni transacciones de negocio. El script tampoco crea la Automation Account, los roles, los schedules o los recursos Azure.
 
-En el escenario de referencia, la identidad administrada recibió roles integrados con alcance directo a los recursos: `Azure Kubernetes Service Contributor Role` sobre AKS y `Contributor` sobre PostgreSQL Flexible Server. Esto permite operar los recursos sin guardar claves, pero `Contributor` es más amplio que un permiso estrictamente mínimo. Una mejora posterior sería crear un rol personalizado con solo las acciones de lectura, inicio y detención necesarias.
+## Estructura y ruta de lectura
 
-Para asignar esos roles se necesita un Owner o una persona con permisos de administración de acceso (RBAC). Un usuario con `Contributor` puede crear recursos, pero normalmente no puede crear asignaciones de roles por sí solo. Esa separación de responsabilidades fue parte importante de la implementación.
+```text
+automatizacion-costos-azure/
+├── automatizacion-horaria.ps1   # Funciones, parámetros y punto de entrada
+├── docs/
+│   ├── arquitectura.md         # Estados, esperas y decisiones
+│   ├── operacion.md            # Configuración y recuperación
+│   └── validacion.md           # Evidencia y matriz de pruebas
+└── README.md
+```
 
-## Qué incluye este repositorio
+1. Revisa [arquitectura](docs/arquitectura.md).
+2. Prepara el entorno con la [guía de operación](docs/operacion.md).
+3. Ejecuta una prueba manual y registra resultados con la [guía de validación](docs/validacion.md).
+4. Habilita recurrencia después de comprobar inicio, detención y recuperación.
 
-- Un script de ejemplo en PowerShell con la secuencia de inicio y detención.
-- Variables reemplazables para usar nombres ficticios de recursos.
-- Diseño idempotente: revisa el estado real de cada recurso antes de actuar y no repite una operación que ya está en curso.
-- Reintentos con espera creciente cuando Azure no tiene capacidad disponible de inmediato para iniciar la base de datos.
-- Validación de módulos y cmdlets requeridos antes de operar, y reintento del flujo completo si falla.
-- Validación final de workloads ejecutada dentro del propio clúster (no solo el estado del servicio administrado).
-- Notas sobre rollback, permisos y medición del consumo.
+## Requisitos
 
-## Ejemplo de uso
+- AKS y PostgreSQL Flexible Server existentes, autorizados para detenerse.
+- Automation Account con identidad administrada y runtime PowerShell compatible.
+- Módulos `Az.Accounts`, `Az.Aks` y `Az.PostgreSql`. Registrar y probar versiones juntas; esta copia no fija una combinación validada.
+- RBAC sobre ambos recursos y acceso a AKS Run Command compatible con las restricciones del clúster.
+- Namespace existente con los Deployments que se desea comprobar.
+- Ventana aprobada y revisión de consumidores externos de la base de datos.
 
-El script está preparado como referencia y usa valores ficticios. Antes de probarlo en un laboratorio hay que reemplazar las variables y revisar los permisos:
+El runbook usa cmdlets Az. Azure CLI es una herramienta opcional para las comprobaciones manuales de la documentación. `Connect-AzAccount -Identity` requiere un runtime Azure con identidad administrada; no funciona como login interactivo de un PC local.
+
+## Parámetros y ejecución
+
+| Parámetro | Valor |
+|---|---|
+| `Action` | `Start` o `Stop`; obligatorio. |
+| `SubscriptionName` | Nombre o ID de la suscripción autorizada. |
+| `AksResourceGroup`, `AksName` | Grupo y nombre del AKS existente. |
+| `PostgreSqlResourceGroup`, `PostgreSqlName` | Grupo y nombre de PostgreSQL. |
+| `AppNamespace` | Namespace válido, existente y confiable. |
+
+Reemplazar todos los marcadores. `AppNamespace` se interpola en shell y no debe recibir texto externo arbitrario.
+
+Ejemplo con nombres ficticios, para un runtime autorizado:
 
 ```powershell
 .\automatizacion-horaria.ps1 `
   -Action Start `
-  -SubscriptionName '<SUBSCRIPTION_NAME>' `
-  -AksResourceGroup '<AKS_RESOURCE_GROUP>' `
-  -AksName '<AKS_NAME>' `
-  -PostgreSqlResourceGroup '<POSTGRES_RESOURCE_GROUP>' `
-  -PostgreSqlName '<POSTGRES_SERVER_NAME>' `
-  -AppNamespace '<APP_NAMESPACE>'
+  -SubscriptionName 'demo-subscription' `
+  -AksResourceGroup 'rg-demo-aks' `
+  -AksName 'aks-demo' `
+  -PostgreSqlResourceGroup 'rg-demo-db' `
+  -PostgreSqlName 'pg-demo' `
+  -AppNamespace 'demo-app'
 ```
 
-## Troubleshooting
+Para detener, usar los mismos recursos con `-Action Stop`. La ejecución modifica su estado y disponibilidad.
 
-- **Proveedor no registrado:** falta registrar el namespace de Azure Automation en la suscripción; se corrige registrándolo y validando el estado `Registered`.
-- **Error de autorización RBAC:** la identidad administrada no tiene permiso sobre ese recurso puntual; se revisa el alcance de la asignación, sin ampliarla a toda la suscripción.
-- **PostgreSQL no llega a `Ready`:** puede ser una operación en curso o falta de capacidad regional; no se reintenta el inicio mientras el estado siga en transición.
-- **AKS no inicia:** se revisa el Activity Log antes de reintentar, manteniendo PostgreSQL encendido mientras se diagnostica.
-- **Un primer encendido automático falló** por un problema transitorio al cargar módulos de PowerShell. Se resolvió agregando la validación explícita de módulos y cmdlets, más un reintento completo del flujo antes de declarar error (ver `Import-RequiredModules` en el script).
+## Evidencia disponible
 
-El orden de las operaciones es la parte más importante del ejemplo. En un ambiente real también se deberían revisar consumidores externos, ventanas de mantenimiento, alertas y reglas de rollback antes de activar un horario recurrente.
+El caso de referencia registra el ciclo manual Start/Stop, comprobación Kubernetes, habilitación de schedules y corrección de una falla de carga de módulos. Los logs internos no se publican.
 
-El ejemplo no crea máquinas virtuales ni administra nodos directamente. AKS sigue siendo un servicio administrado de Azure; el script solo solicita las acciones de inicio y detención del clúster y espera sus estados antes de continuar.
+Esta copia no incluye evidencia pública de una nueva ejecución en una suscripción propia ni una suite con mocks. La [matriz de validación](docs/validacion.md) separa los antecedentes del caso de las comprobaciones reproducibles por terceros.
 
-## Tecnologías
+## Medición de costos
 
-- Azure Automation
-- Azure Kubernetes Service (AKS)
-- PostgreSQL Flexible Server
-- Azure CLI
-- PowerShell
-- Identidad administrada y RBAC
-- Azure Cost Management
+El objetivo es reducir horas de cómputo fuera de uso. Almacenamiento, respaldos y otros recursos pueden continuar generando cargos.
 
-## Cómo comprobar si realmente se ahorra
+La documentación original registra aproximadamente USD 12 por un día encendido y USD 2,65 por un fin de semana detenido. Son observaciones preliminares de períodos distintos, sin export público: no demuestran ahorro mensual ni causalidad exclusiva del runbook.
 
-No basta con mirar que el clúster esté apagado. Para medir el resultado se deben comparar periodos equivalentes en Azure Cost Management, separando el costo de AKS, PostgreSQL y cualquier otro recurso que siga encendido.
+Comparar períodos equivalentes, mismo alcance, moneda y métrica en Azure Cost Management. Registrar también horas de uso y otros cambios de infraestructura.
 
-También conviene anotar las fechas, la moneda y si hubo otros cambios en el ambiente. De esa forma el ahorro no se presenta como una suposición.
+## Límites y mejoras pendientes
 
-Una revisión preliminar en el ambiente de referencia mostró un gasto aproximado de USD 12 al día con los recursos encendidos, frente a USD 2,65 acumulados durante un fin de semana completo con todo apagado. Es una señal de ahorro real, pero un solo fin de semana no permite fijar un porcentaje mensual confiable: falta repetir la medición por al menos dos semanas con el mismo alcance y métrica.
+- No hay bloqueo entre jobs: evitar superponer Start y Stop.
+- Los deadlines limitan observación, no la duración estricta de los cmdlets ni del job.
+- No hay rollback automático; un inicio fallido puede dejar recursos activos para diagnóstico.
+- No se comprueban todos los tipos de workload ni consumidores externos.
+- El matching de algunos errores por texto puede requerir adaptación.
+- Los roles integrados del caso son más amplios que permisos mínimos de Start/Stop.
 
-## Aprendizajes
+Pendientes: validación automática de parámetros, aislamiento explícito del contexto Azure, pruebas con mocks, exclusión entre jobs, validación funcional y evidencia pública de costos. No son características ya implementadas.
 
-Este proyecto sirve para practicar una automatización pequeña, pero con varias decisiones de operación detrás:
-
-- Diseñar dependencias entre servicios.
-- Ejecutar automatizaciones fuera del clúster.
-- Usar identidad administrada en vez de secretos.
-- Mantener los permisos acotados al alcance necesario.
-- Validar la recuperación y no solo el comando de apagado.
-- Relacionar una decisión técnica con una medición de costos.
-
-## Estado
-
-La automatización quedó implementada y funcionando con ejecución programada. Este repositorio público es una versión simplificada y anonimizada para mostrar el diseño y el aprendizaje sin exponer información interna.
+**Tecnologías:** PowerShell, Azure Automation, AKS/Kubernetes, PostgreSQL Flexible Server, identidad administrada, RBAC y Azure Cost Management.

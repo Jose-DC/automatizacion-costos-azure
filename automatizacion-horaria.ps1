@@ -1,8 +1,34 @@
 <#
-    Ejemplo educativo con nombres ficticios. Revisar permisos, nombres y
-    dependencias antes de usarlo. Muestra el diseño real (idempotencia,
-    reintentos, validacion de workloads), no un script listo para copiar
-    y pegar en produccion.
+.SYNOPSIS
+    Coordina el inicio o la detencion de AKS y PostgreSQL Flexible Server.
+.DESCRIPTION
+    Referencia anonimizada de una automatizacion validada en testing.
+    Start espera PostgreSQL Ready antes de iniciar AKS y comprobar Kubernetes.
+    Stop espera AKS Stopped antes de detener PostgreSQL.
+    Se ejecuta con identidad administrada y modulos Az configurados previamente.
+    No crea recursos, permisos ni schedules; no realiza pruebas HTTP ni SQL.
+.PARAMETER Action
+    Start inicia y valida; Stop detiene en orden inverso a las dependencias.
+.PARAMETER SubscriptionName
+    Nombre o ID de la suscripcion autorizada.
+.PARAMETER AksResourceGroup
+    Grupo de recursos del cluster existente.
+.PARAMETER AksName
+    Nombre del AKS existente.
+.PARAMETER PostgreSqlResourceGroup
+    Grupo de recursos de PostgreSQL Flexible Server.
+.PARAMETER PostgreSqlName
+    Nombre del servidor PostgreSQL existente.
+.PARAMETER AppNamespace
+    Namespace valido y confiable con los Deployments a comprobar.
+.EXAMPLE
+    .\automatizacion-horaria.ps1 -Action Start -SubscriptionName 'demo-subscription' `
+      -AksResourceGroup 'rg-demo-aks' -AksName 'aks-demo' `
+      -PostgreSqlResourceGroup 'rg-demo-db' -PostgreSqlName 'pg-demo' `
+      -AppNamespace 'demo-app'
+    Ejemplo para un runtime con identidad administrada; no autentica un PC local.
+.NOTES
+    No hay bloqueo entre jobs ni rollback automatico. Consultar docs/operacion.md.
 #>
 param(
     [Parameter(Mandatory = $true)]
@@ -19,6 +45,8 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# Start comparte un plazo nominal; Stop dispone de un plazo por recurso.
+# Los cmdlets sincronicos y sleeps pueden excederlo: no es un SLA del job.
 $PollSeconds = 30
 $TimeoutMinutes = 60
 $StartTimeoutMinutes = 60
@@ -89,6 +117,7 @@ function Ensure-PostgreSqlReady {
         $state = [string]$postgresql.State
         Write-Output "PostgreSQL: $state"
 
+        # Ready es un estado de Azure; no comprueba una conexion SQL.
         if ($state -eq "Ready") {
             return
         }
@@ -103,6 +132,7 @@ function Ensure-PostgreSqlReady {
             throw "PostgreSQL quedo en un estado no esperado para el inicio: $state."
         }
 
+        # Esperar propagacion evita reenviar Start apenas se acepta la orden.
         if ($startRequestIssued -and ((Get-Date) -lt $startObservationDeadline)) {
             Write-Output "PostgreSQL aun reporta Stopped tras solicitar el inicio. Se espera la propagacion sin reenviar la orden."
             Start-Sleep -Seconds $PollSeconds
@@ -131,6 +161,8 @@ function Ensure-PostgreSqlReady {
         catch {
             $message = $_.Exception.Message
 
+            # Matching de mensajes transitorios conocidos; puede requerir
+            # adaptacion si el proveedor cambia el texto de sus errores.
             if ($message -notmatch "capacity|Capacity is not available|ServerIsNotStopped|busy") {
                 throw
             }
@@ -158,6 +190,7 @@ function Ensure-PostgreSqlReady {
     throw "PostgreSQL no alcanzo Ready dentro del timeout de $TimeoutMinutes minutos."
 }
 
+# Se exige encendido y fin de la operacion Azure antes de revisar Kubernetes.
 function Ensure-AksRunning {
     param([datetime]$Deadline)
 
@@ -191,6 +224,7 @@ function Ensure-AksRunning {
     throw "AKS no alcanzo Running/Succeeded dentro del timeout de $TimeoutMinutes minutos."
 }
 
+# Barrera de dependencia: PostgreSQL permanece activo hasta detener AKS.
 function Ensure-AksStopped {
     $deadline = (Get-Date).AddMinutes($TimeoutMinutes)
 
@@ -224,6 +258,7 @@ function Ensure-AksStopped {
     throw "AKS no alcanzo Stopped/Succeeded dentro del timeout de $TimeoutMinutes minutos."
 }
 
+# Se llama despues de AKS Stopped; no fuerza operaciones de mantenimiento.
 function Ensure-PostgreSqlStopped {
     $deadline = (Get-Date).AddMinutes($TimeoutMinutes)
 
@@ -256,9 +291,9 @@ function Ensure-PostgreSqlStopped {
     throw "PostgreSQL no alcanzo Stopped dentro del timeout de $TimeoutMinutes minutos."
 }
 
-# Valida que la aplicacion realmente responda, no solo que el servicio
-# administrado reporte "Running". Ejecuta kubectl dentro del propio
-# cluster mediante el comando administrado de AKS.
+# Comprueba nodos Ready y Deployments disponibles mediante AKS Run Command.
+# No prueba respuesta HTTP, transacciones ni conexion SQL. Listar pods aporta
+# diagnostico, pero no reemplaza una prueba funcional de la aplicacion.
 function Assert-AksWorkloads {
     param([datetime]$Deadline)
 
@@ -269,6 +304,8 @@ function Assert-AksWorkloads {
 
     $workloadTimeoutSeconds = [int][Math]::Min($WorkloadTimeoutSeconds, $remainingSeconds)
 
+    # AppNamespace se interpola en shell: usar solo un namespace confiable.
+    # Cada wait recibe el mismo timeout; el bloque completo puede durar mas.
     $command = @"
 set -e
 kubectl wait --for=condition=Ready nodes --all --timeout=${workloadTimeoutSeconds}s
@@ -298,6 +335,8 @@ kubectl get pods -n $AppNamespace -o wide
     Write-Output "Validacion de workloads completada: nodos Ready y deployments disponibles."
 }
 
+# El reintento consulta estados desde cero. No hay rollback automatico:
+# recursos ya activos se conservan para diagnostico y recuperacion manual.
 function Invoke-Start {
     $startDeadline = (Get-Date).AddMinutes($StartTimeoutMinutes)
 
@@ -327,6 +366,7 @@ function Invoke-Start {
     }
 }
 
+# Sin reintento global de Stop; una falla deja visible la etapa pendiente.
 function Invoke-Stop {
     Import-RequiredModules
     Ensure-AksStopped
@@ -334,7 +374,9 @@ function Invoke-Stop {
     Write-Output "Detencion completada: AKS Stopped y PostgreSQL Stopped."
 }
 
-# La identidad administrada autentica sin secretos persistidos.
+# Az.Accounts debe estar disponible antes de este punto de entrada.
+# -Identity requiere un entorno Azure con identidad administrada, no un PC
+# con login interactivo. Cuenta, RBAC y schedules se configuran por separado.
 Connect-AzAccount -Identity -ErrorAction Stop | Out-Null
 Set-AzContext -Subscription $SubscriptionName | Out-Null
 
