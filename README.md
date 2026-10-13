@@ -13,13 +13,13 @@ Azure Automation ejecuta el flujo fuera del clúster: un AKS detenido no puede e
 ```mermaid
 %%{init: {"flowchart": {"htmlLabels": false, "nodeSpacing": 24, "rankSpacing": 24}, "themeVariables": {"fontSize": "14px"}}}%%
 flowchart TD
-    S["Schedules<br/>Horario de uso"] --> A["Azure Automation<br/>Runbook PowerShell"]
-    I["Identidad administrada<br/>RBAC"] --> A
+    S["Schedules<br/>Horario de uso"] --> A["Azure Automation<br/>PowerShell"]
+    I["Identidad<br/>administrada<br/>RBAC"] --> A
     A --> D{Acción}
     D -->|Start| P["PostgreSQL<br/>Esperar Ready"]
-    P --> K["AKS<br/>Running / Succeeded"]
+    P --> K["AKS<br/>Running<br/>Succeeded"]
     K --> V["Validar nodos<br/>y Deployments"]
-    D -->|Stop| KS["AKS<br/>Stopped / Succeeded"]
+    D -->|Stop| KS["AKS<br/>Stopped<br/>Succeeded"]
     KS --> PS["PostgreSQL<br/>Esperar Stopped"]
 ```
 
