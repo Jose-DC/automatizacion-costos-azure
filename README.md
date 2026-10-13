@@ -11,15 +11,16 @@ Mantener el ambiente encendido fuera de uso genera consumo de cómputo innecesar
 Azure Automation ejecuta el flujo fuera del clúster: un AKS detenido no puede ejecutar el CronJob que lo vuelve a iniciar. La identidad administrada permite autenticar sin incluir contraseñas en el código.
 
 ```mermaid
+%%{init: {"flowchart": {"htmlLabels": false, "nodeSpacing": 24, "rankSpacing": 24}, "themeVariables": {"fontSize": "14px"}}}%%
 flowchart TD
-    S[Schedules: ventana de uso] --> A[Azure Automation / PowerShell]
-    I[Identidad administrada + RBAC] --> A
+    S["Schedules<br/>Horario de uso"] --> A["Azure Automation<br/>Runbook PowerShell"]
+    I["Identidad administrada<br/>RBAC"] --> A
     A --> D{Acción}
-    D -->|Start| P[PostgreSQL: esperar Ready]
-    P --> K[AKS: esperar Running / Succeeded]
-    K --> V[Nodos Ready y Deployments disponibles]
-    D -->|Stop| KS[AKS: esperar Stopped / Succeeded]
-    KS --> PS[PostgreSQL: esperar Stopped]
+    D -->|Start| P["PostgreSQL<br/>Esperar Ready"]
+    P --> K["AKS<br/>Running / Succeeded"]
+    K --> V["Validar nodos<br/>y Deployments"]
+    D -->|Stop| KS["AKS<br/>Stopped / Succeeded"]
+    KS --> PS["PostgreSQL<br/>Esperar Stopped"]
 ```
 
 ## Qué implementa
